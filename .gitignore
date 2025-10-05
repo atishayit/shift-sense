@@ -1,5 +1,23 @@
-node_modules
+# Node / Next / Nest
+node_modules/
+.next/
+dist/
+coverage/
+*.log
+
+# Env
 .env
-.idea
-.DS_Store
-.prisma/*
+.env.*
+!.env.example
+
+# Python solver
+services/solver/.venv/
+services/solver/__pycache__/
+services/solver/.pytest_cache/
+**/__pycache__/
+*.pyc
+
+# Docker/local data
+postgres-data/
+docker-data/
+'@ | Out-File -Encoding utf8 .gitignore
