@@ -16,6 +16,14 @@ export class SolverService {
     return org.id;
   }
 
+  private async getPinned(scheduleId: string) {
+    const rows = await this.prisma.assignment.findMany({
+      where: { shift: { scheduleId }, isPinned: true },
+      select: { shiftId: true, employeeId: true },
+    });
+    return rows.map(r => ({ shiftId: r.shiftId, employeeId: r.employeeId }));
+  }
+
   async run(orgRef: string, scheduleId: string, weights?: Record<string, number>) {
     const orgId = await this.orgIdFromRef(orgRef);
 
@@ -37,6 +45,8 @@ export class SolverService {
 
     const preset = await this.prisma.constraintPreset.findFirst({ where: { orgId } });
     const config = preset?.config ?? { weights: { cost: 1, casualPenalty: 50, consecutivePenalty: 20 } };
+    const pinned = await this.getPinned(scheduleId);
+    const pinnedSet = new Set(pinned.map(p => `${p.shiftId}:${p.employeeId}`));
 
     const payload: any = {
       config,
@@ -50,6 +60,7 @@ export class SolverService {
         avail: e.availabilities.map(a => ({ weekday: a.weekday, start: a.startTime, end: a.endTime })),
         timeOffs: e.timeOffs.map(t => ({ start: t.start.toISOString(), end: t.end.toISOString() })),
       })),
+      pinned: pinned
     };
 
     if (weights) payload.weights = weights;
@@ -62,8 +73,8 @@ export class SolverService {
       console.log('SOLVER_REQ', {
         shifts: payload.shifts.length,
         employees: payload.employees.length,
-        sampleShift: payload.shifts[0],
-        sampleEmp: payload.employees[0],
+        sampleShift: payload.shifts[0] ?? null,
+        sampleEmp: payload.employees[0] ?? null
       });
 
       const resp = await firstValueFrom(
@@ -84,7 +95,8 @@ export class SolverService {
             const e = empMap.get(a.employeeId)!;
             const hours = (s.end.getTime() - s.start.getTime()) / 3_600_000;
             const cost = Number(e.hourlyCost) * hours;
-            return { shiftId: a.shiftId, employeeId: a.employeeId, cost };
+            const key = `${a.shiftId}:${a.employeeId}`;
+            return { shiftId: a.shiftId, employeeId: a.employeeId, cost, isPinned: pinnedSet.has(key) };
           }),
         });
       }

@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Param, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Put } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 
-@Controller()
+@Controller() // empty because main.ts sets global 'api'
 export class ScheduleController {
   constructor(private readonly svc: ScheduleService) { }
 
@@ -9,9 +9,10 @@ export class ScheduleController {
   @Get('schedules/:id') get(@Param('id') id: string) { return this.svc.get(id); }
   @Get('schedules/:id/summary') summary(@Param('id') id: string) { return this.svc.summary(id); }
 
-  // PRESET ROUTES
   @Get('orgs/:orgRef/preset') getPreset(@Param('orgRef') orgRef: string) { return this.svc.getPreset(orgRef); }
-  @Put('orgs/:orgRef/preset') savePreset(@Param('orgRef') orgRef: string, @Body() body: any) {
-    return this.svc.savePreset(orgRef, body);
-  }
+  @Put('orgs/:orgRef/preset') savePreset(@Param('orgRef') orgRef: string, @Body() body: any) { return this.svc.savePreset(orgRef, body); }
+
+  // NEW
+  @Patch('assignments/:id/pin') pin(@Param('id') id: string) { return this.svc.pinAssignment(id, true); }
+  @Patch('assignments/:id/unpin') unpin(@Param('id') id: string) { return this.svc.pinAssignment(id, false); }
 }

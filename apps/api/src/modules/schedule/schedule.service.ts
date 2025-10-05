@@ -81,4 +81,14 @@ export class ScheduleService {
     return this.prisma.constraintPreset.create({ data: { orgId, name: 'Default', config } });
   }
 
+  async pinAssignment(id: string, isPinned: boolean) {
+    const a = await this.prisma.assignment.update({ where: { id }, data: { isPinned } });
+    await this.prisma.auditLog.create({
+      data: {
+        entity: 'Assignment', entityId: id, action: isPinned ? 'PIN' : 'UNPIN',
+        orgId: (await this.prisma.employee.findUnique({ where: { id: a.employeeId }, select: { orgId: true } }))?.orgId ?? null
+      },
+    });
+    return a;
+  }
 }

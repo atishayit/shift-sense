@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from ortools.sat.python import cp_model
 from datetime import datetime
+from typing import List, Optional
 
 class Shift(BaseModel):
     id: str
@@ -22,22 +23,26 @@ class TO(BaseModel):
 class Employee(BaseModel):
     id: str
     hourlyCost: float
-    roleIds: list[str]
+    roleIds: List[str]
     maxWeeklyHours: int = 38
     employmentType: str
-    avail: list[Av] = []
-    timeOffs: list[TO] = []
+    avail: List[Av] = []
+    timeOffs: List[TO] = []
+
+class Pin(BaseModel):
+    shiftId: str
+    employeeId: str
 
 class SolveRequest(BaseModel):
-    shifts: list[Shift]
-    employees: list[Employee]
-    config: dict | None = None
+    shifts: List[Shift]
+    employees: List[Employee]
+    # support either top-level weights or legacy config.weights
+    weights: Optional[dict] = {}
+    config: Optional[dict] = None
+    pinned: Optional[List[Pin]] = []
 
 def iso(dt: str) -> datetime:
     return datetime.fromisoformat(dt.replace("Z", "+00:00"))
-
-def minutes(dt: datetime) -> int:
-    return int(dt.timestamp() // 60)
 
 def hhmm_to_min(x: str) -> int:
     h, m = x.split(":")
@@ -47,11 +52,12 @@ app = FastAPI()
 
 @app.post("/solve")
 def solve(req: SolveRequest):
-    cfg = req.config or {}
-    W = (cfg.get("weights") or {})
-    casual_pen = int(W.get("casualPenalty", 0))       # points per casual assignment
-    consec_pen = int(W.get("consecutivePenalty", 0))  # points per employee for each consecutive-day pair
-    # cost weight handled by wages directly
+    # weights
+    W = req.weights or {}
+    if not W and req.config and isinstance(req.config, dict):
+        W = (req.config.get("weights") or {})
+    casual_pen = int(W.get("casualPenalty", 0))
+    consec_pen = int(W.get("consecutivePenalty", 0))
 
     # preprocess shifts
     S = []
@@ -63,28 +69,28 @@ def solve(req: SolveRequest):
             "wday": st.weekday(),  # Mon=0
             "st_md": st.hour * 60 + st.minute,
             "en_md": en.hour * 60 + en.minute,
+            "required": s.required,
         })
 
     m = cp_model.CpModel()
 
     # decision vars
-    X = {}  # X[(sid, eid)]
+    X = {}
     for s in S:
         for e in req.employees:
             eligible = s["role"] in e.roleIds
-            # availability
+            # availability check
             within = True
             if e.avail:
                 within = False
                 for a in e.avail:
-                    # convert Sun..Sat(0..6) to Python Mon..Sun
-                    py = (a.weekday + 6) % 7
+                    py = (a.weekday + 6) % 7  # convert Sun..Sat to Mon..Sun
                     if py != s["wday"]:
                         continue
                     if hhmm_to_min(a.start) <= s["st_md"] and s["en_md"] <= hhmm_to_min(a.end):
                         within = True
                         break
-            # timeoff
+            # time off check
             free = True
             for t in e.timeOffs:
                 if not (iso(t.end) <= s["st"] or s["en"] <= iso(t.start)):
@@ -96,9 +102,16 @@ def solve(req: SolveRequest):
                 m.Add(b == 0)
             X[(s["id"], e.id)] = b
 
+    # enforce pinned
+    pinned_set = {(p.shiftId, p.employeeId) for p in (req.pinned or [])}
+    for s in S:
+        for e in req.employees:
+            if (s["id"], e.id) in pinned_set:
+                m.Add(X[(s["id"], e.id)] == 1)
+
     # coverage
     for s in S:
-        m.Add(sum(X[(s["id"], e.id)] for e in req.employees) == next(ss.required for ss in req.shifts if ss.id == s["id"]))
+        m.Add(sum(X[(s["id"], e.id)] for e in req.employees) == s["required"])
 
     # no overlapping shifts per employee
     for e in req.employees:
@@ -123,14 +136,13 @@ def solve(req: SolveRequest):
     for e in req.employees:
         m.Add(sum(S[i]["dur_min"] * X[(S[i]["id"], e.id)] for i in range(len(S))) <= e.maxWeeklyHours * 60)
 
-    # soft penalties
-    pen_terms: list[cp_model.IntVar | cp_model.LinearExpr] = []
+    # penalties
+    pen_terms = []
 
-    # consecutive days penalty per employee
+    # consecutive days penalty
     for e in req.employees:
         day_has = [m.NewBoolVar(f"d_{e.id}_{d}") for d in range(7)]
         for d in range(7):
-            # day d is true if any shift that day is taken
             sd = [X[(s["id"], e.id)] for s in S if s["wday"] == d]
             if sd:
                 for v in sd:
@@ -140,21 +152,20 @@ def solve(req: SolveRequest):
                 m.Add(day_has[d] == 0)
         for d in range(6):
             y = m.NewBoolVar(f"consec_{e.id}_{d}")
-            # y = AND(day_has[d], day_has[d+1])
             m.Add(y <= day_has[d]); m.Add(y <= day_has[d + 1])
             m.Add(y >= day_has[d] + day_has[d + 1] - 1)
             if consec_pen:
                 pen_terms.append(consec_pen * y)
 
-    # objective: wage cost + soft penalties
+    # wage cost + casual penalty
     wage_terms = []
     for s in S:
         for e in req.employees:
             cents = int(round(e.hourlyCost * 100))
-            base = cents * X[(s["id"], e.id)]
+            term = cents * X[(s["id"], e.id)]
             if e.employmentType == "CASUAL" and casual_pen:
-                base += casual_pen * X[(s["id"], e.id)]
-            wage_terms.append(base)
+                term += casual_pen * X[(s["id"], e.id)]
+            wage_terms.append(term)
 
     m.Minimize(sum(wage_terms) + sum(pen_terms))
 
