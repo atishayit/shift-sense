@@ -7,8 +7,9 @@ import { ScheduleModule } from './modules/schedule/schedule.module';
 import { SolverModule } from './modules/solver/solver.module';
 import { AuditService } from './common/audit.service';
 import { AuditModule } from './modules/audit/audit.module';
+import { ForecastModule } from './modules/forecast/forecast.module';
 @Module({
-    imports: [PrismaModule, OrgModule, EmpModule, DemandModule, ScheduleModule, SolverModule, AuditModule],
+    imports: [PrismaModule, OrgModule, EmpModule, DemandModule, ScheduleModule, SolverModule, AuditModule, ForecastModule],
     providers: [AuditService]
 })
 export class AppModule { }
