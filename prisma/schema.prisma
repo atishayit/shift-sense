@@ -1,0 +1,286 @@
+// schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MANAGER
+  DISPATCHER
+  EMPLOYEE
+  VIEWER
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CASUAL
+  CONTRACTOR
+}
+
+enum SkillLevel {
+  NOVICE
+  INTERMEDIATE
+  ADVANCED
+}
+
+model User {
+  id          String       @id @default(cuid())
+  email       String       @unique
+  name        String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  employees   Employee[]
+  auditLogs   AuditLog[]
+}
+
+model Organization {
+  id                String             @id @default(cuid())
+  name              String
+  slug              String             @unique
+  timezone          String             @default("Australia/Melbourne")
+  locations         Location[]
+  teams             Team[]
+  roles             Role[]
+  skills            Skill[]
+  schedules         Schedule[]
+  memberships       Membership[]
+  auditLogs         AuditLog[]
+  constraintPresets ConstraintPreset[]
+  employees         Employee[] // <-- ADDED
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+}
+
+model Membership {
+  id     String       @id @default(cuid())
+  userId String
+  orgId  String
+  role   MemberRole
+  user   User         @relation(fields: [userId], references: [id])
+  org    Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([userId, orgId])
+}
+
+model Location {
+  id              String                @id @default(cuid())
+  orgId           String
+  name            String
+  address         String?
+  org             Organization          @relation(fields: [orgId], references: [id])
+  teams           Team[]
+  demandTemplates ShiftDemandTemplate[]
+  shifts          Shift[] // <-- ADDED
+  createdAt       DateTime              @default(now())
+}
+
+model Team {
+  id         String       @id @default(cuid())
+  orgId      String
+  locationId String?
+  name       String
+  org        Organization @relation(fields: [orgId], references: [id])
+  location   Location?    @relation(fields: [locationId], references: [id])
+  employees  Employee[]
+  roles      Role[]
+}
+
+model Role {
+  id              String                @id @default(cuid())
+  orgId           String
+  teamId          String?
+  name            String
+  minSkillLevel   SkillLevel            @default(NOVICE)
+  org             Organization          @relation(fields: [orgId], references: [id])
+  team            Team?                 @relation(fields: [teamId], references: [id])
+  requirements    RoleRequirement[]
+  employees       Employee[] // <-- ADDED
+  demandTemplates ShiftDemandTemplate[] // <-- ADDED
+  shifts          Shift[] // <-- ADDED
+}
+
+model Skill {
+  id               String            @id @default(cuid())
+  orgId            String
+  name             String
+  org              Organization      @relation(fields: [orgId], references: [id])
+  employeeSkills   EmployeeSkill[]
+  roleRequirements RoleRequirement[] // <-- ADDED
+}
+
+model Employee {
+  id             String               @id @default(cuid())
+  orgId          String
+  userId         String?
+  teamId         String?
+  roleId         String?
+  code           String               @unique
+  firstName      String
+  lastName       String
+  employmentType EmploymentType
+  hourlyCost     Decimal              @db.Decimal(10, 2) // <-- FIXED
+  maxWeeklyHours Int                  @default(38)
+  org            Organization         @relation(fields: [orgId], references: [id])
+  user           User?                @relation(fields: [userId], references: [id])
+  team           Team?                @relation(fields: [teamId], references: [id])
+  role           Role?                @relation(fields: [roleId], references: [id])
+  contracts      EmploymentContract[]
+  skills         EmployeeSkill[]
+  availabilities Availability[]
+  timeOffs       TimeOff[]
+  assignments    Assignment[]
+  createdAt      DateTime             @default(now())
+}
+
+model EmployeeSkill {
+  id         String     @id @default(cuid())
+  employeeId String
+  skillId    String
+  level      SkillLevel
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+  skill      Skill      @relation(fields: [skillId], references: [id])
+
+  @@unique([employeeId, skillId])
+}
+
+model EmploymentContract {
+  id                 String    @id @default(cuid())
+  employeeId         String
+  startDate          DateTime
+  endDate            DateTime?
+  minDailyHours      Int       @default(0)
+  maxDailyHours      Int       @default(10)
+  maxConsecutiveDays Int       @default(6)
+  employee           Employee  @relation(fields: [employeeId], references: [id])
+}
+
+model Availability {
+  id         String   @id @default(cuid())
+  employeeId String
+  weekday    Int // 0=Sun … 6=Sat
+  startTime  String // "09:00"
+  endTime    String // "17:00"
+  employee   Employee @relation(fields: [employeeId], references: [id])
+}
+
+model TimeOff {
+  id         String   @id @default(cuid())
+  employeeId String
+  start      DateTime
+  end        DateTime
+  reason     String?
+  employee   Employee @relation(fields: [employeeId], references: [id])
+}
+
+model RoleRequirement {
+  id      String     @id @default(cuid())
+  roleId  String
+  skillId String
+  level   SkillLevel
+  role    Role       @relation(fields: [roleId], references: [id])
+  skill   Skill      @relation(fields: [skillId], references: [id])
+
+  @@unique([roleId, skillId])
+}
+
+model ShiftDemandTemplate {
+  id         String   @id @default(cuid())
+  locationId String
+  weekday    Int
+  startTime  String
+  endTime    String
+  roleId     String
+  required   Int      @default(1)
+  location   Location @relation(fields: [locationId], references: [id])
+  role       Role     @relation(fields: [roleId], references: [id])
+}
+
+model Schedule {
+  id        String            @id @default(cuid())
+  orgId     String
+  name      String
+  weekStart DateTime
+  weekEnd   DateTime
+  status    String            @default("DRAFT") // DRAFT|OPTIMIZING|FINAL
+  presetId  String?
+  org       Organization      @relation(fields: [orgId], references: [id])
+  preset    ConstraintPreset? @relation(fields: [presetId], references: [id])
+  runs      ScheduleRun[]
+  shifts    Shift[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([orgId, weekStart, weekEnd])
+}
+
+model ConstraintPreset {
+  id        String       @id @default(cuid())
+  orgId     String
+  name      String
+  config    Json
+  org       Organization @relation(fields: [orgId], references: [id])
+  schedules Schedule[] // <-- ADDED
+}
+
+model Shift {
+  id          String       @id @default(cuid())
+  scheduleId  String
+  locationId  String
+  roleId      String
+  start       DateTime
+  end         DateTime
+  required    Int          @default(1)
+  schedule    Schedule     @relation(fields: [scheduleId], references: [id])
+  location    Location     @relation(fields: [locationId], references: [id])
+  role        Role         @relation(fields: [roleId], references: [id])
+  assignments Assignment[]
+
+  @@index([scheduleId, start, end])
+}
+
+model Assignment {
+  id         String   @id @default(cuid())
+  shiftId    String
+  employeeId String
+  cost       Decimal  @db.Decimal(10, 2) // <-- FIXED
+  isPinned   Boolean  @default(false)
+  shift      Shift    @relation(fields: [shiftId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([shiftId, employeeId])
+}
+
+model ScheduleRun {
+  id            String    @id @default(cuid())
+  scheduleId    String
+  solver        String    @default("cp-sat")
+  status        String    @default("QUEUED") // QUEUED|RUNNING|OK|FAILED
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  objective     Decimal?  @db.Decimal(14, 2) // <-- FIXED
+  violations    Json?
+  costBreakdown Json?
+  schedule      Schedule  @relation(fields: [scheduleId], references: [id])
+}
+
+model AuditLog {
+  id        String        @id @default(cuid())
+  orgId     String?
+  userId    String?
+  entity    String
+  entityId  String
+  action    String
+  meta      Json?
+  createdAt DateTime      @default(now())
+  org       Organization? @relation(fields: [orgId], references: [id])
+  user      User?         @relation(fields: [userId], references: [id])
+}
