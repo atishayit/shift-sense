@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shiftsense
+      POSTGRES_USER: shiftsense
+      POSTGRES_PASSWORD: shiftsense
+    ports: ["5432:5432"]
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shiftsense -d shiftsense"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  solver:
+    build:
+      context: ./services/solver
+      dockerfile: Dockerfile
+    environment:
+      PYTHONUNBUFFERED: "1"
+    ports: ["5001:5001"]
+    command: [ "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5001" ]
+    depends_on: [db]
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://shiftsense:shiftsense@db:5432/shiftsense?schema=public
+      SOLVER_URL: http://solver:5001
+      REDIS_URL: redis://redis:6379
+      API_KEY: devkey-please-change
+      PORT: "4000"
+    ports: ["4000:4000"]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    command: ["pnpm","start:dev"]
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NODE_ENV: development
+      PORT: "3000"
+    ports: ["3000:3000"]
+    depends_on: [api]
+    command: ["pnpm","dev","--port","3000","--hostname","0.0.0.0"]
+
+volumes:
+  dbdata:
