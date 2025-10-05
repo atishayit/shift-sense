@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, HttpException } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
+import { AuditService } from '../../common/audit.service';
 
 @Injectable()
 export class ScheduleService {
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService, private audit: AuditService) { }
 
   private async orgIdFromRef(orgRef: string) {
     const org = await this.prisma.organization.findFirst({
@@ -74,21 +75,37 @@ export class ScheduleService {
       config: { weights: { cost: 1, casualPenalty: 50, consecutivePenalty: 20 } }
     };
   }
+
   async savePreset(orgRef: string, config: any) {
     const orgId = await this.orgIdFromRef(orgRef);
     const existing = await this.prisma.constraintPreset.findFirst({ where: { orgId } });
-    if (existing) return this.prisma.constraintPreset.update({ where: { id: existing.id }, data: { config } });
-    return this.prisma.constraintPreset.create({ data: { orgId, name: 'Default', config } });
+    const preset = existing
+      ? await this.prisma.constraintPreset.update({ where: { id: existing.id }, data: { config } })
+      : await this.prisma.constraintPreset.create({ data: { orgId: orgId, name: 'Default', config } });
+
+    await this.audit.write({
+      orgId: orgId,
+      userId: null,
+      entity: 'ConstraintPreset',
+      entityId: preset.id,
+      action: 'PRESET_SAVE',
+      meta: { name: preset.name },
+    });
+
+    return preset;
   }
 
   async pinAssignment(id: string, isPinned: boolean) {
-    const a = await this.prisma.assignment.update({ where: { id }, data: { isPinned } });
-    await this.prisma.auditLog.create({
-      data: {
-        entity: 'Assignment', entityId: id, action: isPinned ? 'PIN' : 'UNPIN',
-        orgId: (await this.prisma.employee.findUnique({ where: { id: a.employeeId }, select: { orgId: true } }))?.orgId ?? null
-      },
+    const updated = await this.prisma.assignment.update({ where: { id }, data: { isPinned } });
+    const emp = await this.prisma.employee.findUnique({ where: { id: updated.employeeId }, select: { orgId: true } });
+    await this.audit.write({
+      orgId: emp?.orgId,
+      userId: null,
+      entity: 'Assignment',
+      entityId: updated.id,
+      action: isPinned ? 'PIN' : 'UNPIN',
+      meta: { shiftId: updated.shiftId, employeeId: updated.employeeId },
     });
-    return a;
+    return updated;
   }
 }

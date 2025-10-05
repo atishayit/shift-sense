@@ -1,26 +1,27 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
-
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "ShiftSense",
-  description: "Scheduling with CP-SAT",
+  description: "Scheduling with solver",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <nav className="w-full px-4 py-3 border-b flex gap-4 text-sm">
-          <a href="/" className="underline">Home</a>
-          <a href="/roster" className="underline">Roster</a>
-          <a href="/runs" className="underline">Runs</a>
-          <a href="/preset" className="underline">Preset</a>
-        </nav>
-        {children}
+      <body className="min-h-screen bg-black text-white">
+        <header className="sticky top-0 z-10 border-b border-neutral-800 bg-black/70 backdrop-blur">
+          <nav className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 text-sm">
+            <Link href="/" className="font-semibold mr-4">ShiftSense</Link>
+            <Link href="/roster">Roster</Link>
+            <Link href="/runs">Runs</Link>
+            <Link href="/preset">Preset</Link>
+            <Link href="/audit">Audit</Link>
+            <Link href="/forecast">Forecast</Link>
+          </nav>
+        </header>
+        <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
       </body>
     </html>
   );

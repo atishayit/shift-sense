@@ -2,10 +2,15 @@ import { Injectable, HttpException } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { AuditService } from '../../common/audit.service';
 
 @Injectable()
 export class SolverService {
-  constructor(private prisma: PrismaService, private http: HttpService) { }
+  constructor(
+    private prisma: PrismaService,
+    private http: HttpService,
+    private audit: AuditService,
+  ) { }
 
   private async orgIdFromRef(orgRef: string) {
     const org = await this.prisma.organization.findFirst({
@@ -56,13 +61,12 @@ export class SolverService {
         hourlyCost: Number(e.hourlyCost),
         roleIds: e.roleId ? [e.roleId] : [],
         maxWeeklyHours: e.maxWeeklyHours ?? 38,
-        employmentType: e.employmentType,           // NEW
+        employmentType: e.employmentType,
         avail: e.availabilities.map(a => ({ weekday: a.weekday, start: a.startTime, end: a.endTime })),
         timeOffs: e.timeOffs.map(t => ({ start: t.start.toISOString(), end: t.end.toISOString() })),
       })),
-      pinned: pinned
+      pinned,
     };
-
     if (weights) payload.weights = weights;
 
     const run = await this.prisma.scheduleRun.create({
@@ -70,21 +74,14 @@ export class SolverService {
     });
 
     try {
-      console.log('SOLVER_REQ', {
-        shifts: payload.shifts.length,
-        employees: payload.employees.length,
-        sampleShift: payload.shifts[0] ?? null,
-        sampleEmp: payload.employees[0] ?? null
-      });
-
+      // call solver
       const resp = await firstValueFrom(
         this.http.post('http://127.0.0.1:5001/solve', payload, { timeout: 20000 }),
       );
-      console.log('SOLVER_RESP', resp.status);
-
+      
       const data = resp.data as { assignments?: { shiftId: string; employeeId: string }[]; objective?: number };
 
-      // wipe then insert
+      // wipe and recreate (preserve pins)
       await this.prisma.assignment.deleteMany({ where: { shift: { scheduleId } } });
       if (data.assignments?.length) {
         const shiftMap = new Map(schedule.shifts.map(s => [s.id, s]));
@@ -112,6 +109,16 @@ export class SolverService {
         },
       });
 
+      // audit: success
+      await this.audit.write({
+        orgId: schedule.orgId,
+        userId: null,
+        entity: 'Schedule',
+        entityId: scheduleId,
+        action: 'SOLVE_OK',
+        meta: { objective: data.objective ?? null, assignments: data.assignments?.length ?? 0 },
+      });
+
       return this.prisma.schedule.findUnique({
         where: { id: scheduleId },
         include: {
@@ -127,11 +134,21 @@ export class SolverService {
         },
       });
     } catch (err: any) {
-      console.error('SOLVER_ERROR', err?.response?.data ?? err?.message ?? err);
       await this.prisma.scheduleRun.update({
         where: { id: run.id },
         data: { status: 'FAILED', finishedAt: new Date() },
       });
+
+      // audit: failure
+      await this.audit.write({
+        orgId: schedule.orgId,
+        userId: null,
+        entity: 'Schedule',
+        entityId: scheduleId,
+        action: 'SOLVE_FAILED',
+        meta: { error: err?.response?.data ?? err?.message ?? 'Unknown' },
+      });
+
       throw new HttpException(
         { message: 'Solver failed', detail: err?.response?.data ?? err?.message ?? 'Unknown error' },
         502,
