@@ -4,13 +4,10 @@ import { RedisService } from 'src/redis/redis.service';
 
 @Injectable()
 export class OrgService {
-  constructor(
-    private prisma: PrismaService,
-    private redis: RedisService,
-  ) { }
+  constructor(private prisma: PrismaService, private redis: RedisService) { }
 
   private keyList() { return 'org:list'; }
-  private keyOne(idOrSlug: string) { return `org:${idOrSlug}`; }
+  private keyOne(id: string) { return `org:${id}`; }
 
   async list() {
     const k = this.keyList();
@@ -33,26 +30,26 @@ export class OrgService {
   }
 
   async create(dto: { name: string; slug: string; timezone?: string }) {
-    const row = await this.prisma.organization.create({ data: dto });
+    const created = await this.prisma.organization.create({ data: dto });
+    // bust caches
     await this.redis.del(this.keyList());
-    await this.redis.setJSON(this.keyOne(row.id), row, 60);
-    await this.redis.setJSON(this.keyOne(row.slug), row, 60);
-    return row;
+    await this.redis.del(this.keyOne(created.id));
+    return created;
   }
 
   async update(id: string, dto: Partial<{ name: string; slug: string; timezone: string }>) {
-    const row = await this.prisma.organization.update({ where: { id }, data: dto });
+    const updated = await this.prisma.organization.update({ where: { id }, data: dto });
+    // bust caches
     await this.redis.del(this.keyList());
-    await this.redis.setJSON(this.keyOne(id), row, 60);
-    if (row.slug) await this.redis.setJSON(this.keyOne(row.slug), row, 60);
-    return row;
+    await this.redis.del(this.keyOne(id));
+    return updated;
   }
 
   async remove(id: string) {
-    const row = await this.prisma.organization.delete({ where: { id } });
+    const removed = await this.prisma.organization.delete({ where: { id } });
+    // bust caches
     await this.redis.del(this.keyList());
     await this.redis.del(this.keyOne(id));
-    if (row.slug) await this.redis.del(this.keyOne(row.slug));
-    return row;
+    return removed;
   }
 }

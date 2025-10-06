@@ -6,6 +6,21 @@ import { RedisService } from 'src/redis/redis.service';
 
 type TSPoint = { ds: string; y: number };
 
+type SolverFold =
+  | { fold: number; mape: number; mae?: number; rmse?: number }
+  | { foldIndex: number; mape: number; mae?: number; rmse?: number };
+
+type SolverForecast = {
+  // Your solver already returns these as TSPoint[] (per your UI)
+  yhat: TSPoint[];
+  yhat_lower: TSPoint[];
+  yhat_upper: TSPoint[];
+  // Backtest summaries (any of these may appear)
+  mape?: number | null;
+  backtests?: SolverFold[];
+  folds?: Array<number | SolverFold>;
+};
+
 @Injectable()
 export class ForecastService {
   private readonly SOLVER = process.env.SOLVER_URL ?? 'http://127.0.0.1:5001';
@@ -32,11 +47,10 @@ export class ForecastService {
       select: { weekday: true, required: true },
     });
 
-    // daily required = sum(required) across templates for that weekday
     const weekdayTotals = new Array(7).fill(0);
     for (const t of templates) weekdayTotals[t.weekday] += t.required;
 
-    const start = new Date(); // today as reference end
+    const start = new Date();
     const days = weeks * 7;
     const series: TSPoint[] = [];
     for (let i = days - 1; i >= 0; i--) {
@@ -57,8 +71,8 @@ export class ForecastService {
     const orgId = await this.orgId(orgRef);
     const key = this.cacheKey(orgId, horizon_days);
 
-    // 1) try cache
-    const cached = await this.redis.getJSON<{ history: TSPoint[]; forecast: any }>(key);
+    // 1) cache
+    const cached = await this.redis.getJSON<{ history: TSPoint[]; forecast: SolverForecast }>(key);
     if (cached) return cached;
 
     // 2) compute + call solver
@@ -73,12 +87,74 @@ export class ForecastService {
     const resp = await firstValueFrom(
       this.http.post(`${this.SOLVER}/forecast`, payload, { timeout: 20000 }),
     );
+    const forecast = resp.data as SolverForecast;
 
-    const out = { history: series, forecast: resp.data }; // yhat, bands, mape, folds
+    // 3) persist (best-effort; won’t affect response)
+    try {
+      // normalize folds
+      const rawFolds: SolverFold[] =
+        (forecast.backtests as SolverFold[] | undefined) ??
+        (Array.isArray(forecast.folds)
+          ? forecast.folds
+            .map((f, i) =>
+              typeof f === 'number' ? { foldIndex: i + 1, mape: f } : f,
+            )
+          : []);
 
-    // 3) cache result (5 min TTL)
-    await this.redis.setJSON(key, out, 300);
+      const foldRows = rawFolds
+        .filter((f) => typeof (f as any).mape === 'number')
+        .map((f) => ({
+          foldIndex: 'fold' in f ? (f as any).fold : (f as any).foldIndex ?? 0,
+          mape: (f as any).mape as number,
+          mae: (f as any).mae ?? null,
+          rmse: (f as any).rmse ?? null,
+        }));
 
+      const mapeAvg =
+        typeof forecast.mape === 'number'
+          ? forecast.mape
+          : foldRows.length
+            ? foldRows.reduce((a, b) => a + b.mape, 0) / foldRows.length
+            : 0;
+
+      const run = await this.prisma.forecastRun.create({
+        data: {
+          orgId,
+          method: 'statsmodels', // keep your default
+          horizonDays: horizon_days,
+          mapeAvg,
+        },
+      });
+
+      if (foldRows.length) {
+        await this.prisma.forecastFold.createMany({
+          data: foldRows.map((f) => ({
+            runId: run.id,
+            foldIndex: f.foldIndex,
+            mape: f.mape,
+            mae: f.mae,
+            rmse: f.rmse,
+          })),
+        });
+      }
+    } catch {
+      // swallow
+    }
+
+    const out = { history: series, forecast };
+    await this.redis.setJSON(key, out, 300); // 5 min TTL
     return out;
+  }
+
+  // List persisted runs with folds
+  listRuns(orgRef: string, limit = 20) {
+    return this.orgId(orgRef).then((orgId) =>
+      this.prisma.forecastRun.findMany({
+        where: { orgId },
+        orderBy: { createdAt: 'desc' },
+        take: Math.max(1, Math.min(limit, 100)),
+        include: { folds: { orderBy: { foldIndex: 'asc' } } },
+      }),
+    );
   }
 }

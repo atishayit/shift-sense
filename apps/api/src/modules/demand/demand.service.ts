@@ -4,10 +4,7 @@ import { RedisService } from 'src/redis/redis.service';
 
 @Injectable()
 export class DemandService {
-  constructor(
-    private prisma: PrismaService,
-    private redis: RedisService,
-  ) { }
+  constructor(private prisma: PrismaService, private redis: RedisService) { }
 
   private async orgIdFromRef(orgRef: string) {
     const org = await this.prisma.organization.findFirst({
@@ -18,15 +15,13 @@ export class DemandService {
     return org.id;
   }
 
-  private keyDemand(orgId: string, locationId?: string) {
-    return locationId
-      ? `demand:${orgId}:loc:${locationId}`
-      : `demand:${orgId}:all`;
+  private keyList(orgId: string, locationId?: string) {
+    return `demand:${orgId}:${locationId ?? 'all'}`;
   }
 
   async list(orgRef: string, locationId?: string) {
     const orgId = await this.orgIdFromRef(orgRef);
-    const k = this.keyDemand(orgId, locationId);
+    const k = this.keyList(orgId, locationId);
 
     const hit = await this.redis.getJSON<any[]>(k);
     if (hit) return hit;
@@ -45,43 +40,49 @@ export class DemandService {
     dto: { locationId: string; roleId: string; weekday: number; startTime: string; endTime: string; required: number },
   ) {
     const orgId = await this.orgIdFromRef(orgRef);
-    const row = await this.prisma.shiftDemandTemplate.create({ data: dto });
+    const created = await this.prisma.shiftDemandTemplate.create({ data: dto });
 
-    // bust both location-specific and org-wide caches
-    await this.redis.del(this.keyDemand(orgId));
-    await this.redis.del(this.keyDemand(orgId, dto.locationId));
-    return row;
+    // bust caches (all + specific location)
+    await this.redis.del(this.keyList(orgId));
+    await this.redis.del(this.keyList(orgId, dto.locationId));
+    return created;
   }
 
   async update(
     id: string,
     dto: Partial<{ locationId: string; roleId: string; weekday: number; startTime: string; endTime: string; required: number }>,
   ) {
-    const before = await this.prisma.shiftDemandTemplate.findUnique({ where: { id } });
-    const row = await this.prisma.shiftDemandTemplate.update({ where: { id }, data: dto });
+    // fetch to know current org/location for cache keys
+    const before = await this.prisma.shiftDemandTemplate.findUnique({
+      where: { id }, select: { locationId: true, location: { select: { orgId: true } } },
+    });
 
-    if (before) {
-      const loc = dto.locationId ?? before.locationId;
-      const org = await this.prisma.location.findUnique({ where: { id: loc }, select: { orgId: true } });
-      if (org?.orgId) {
-        await this.redis.del(this.keyDemand(org.orgId));
-        await this.redis.del(this.keyDemand(org.orgId, loc));
+    const updated = await this.prisma.shiftDemandTemplate.update({ where: { id }, data: dto });
+
+    if (before?.location?.orgId) {
+      const orgId = before.location.orgId;
+      await this.redis.del(this.keyList(orgId)); // all
+      await this.redis.del(this.keyList(orgId, before.locationId)); // old location bucket
+      if (dto.locationId && dto.locationId !== before.locationId) {
+        await this.redis.del(this.keyList(orgId, dto.locationId)); // new location bucket
       }
     }
-    return row;
+    return updated;
   }
 
   async remove(id: string) {
-    const before = await this.prisma.shiftDemandTemplate.findUnique({ where: { id } });
-    const row = await this.prisma.shiftDemandTemplate.delete({ where: { id } });
+    // fetch to know org/location for cache keys
+    const before = await this.prisma.shiftDemandTemplate.findUnique({
+      where: { id }, select: { locationId: true, location: { select: { orgId: true } } },
+    });
 
-    if (before) {
-      const org = await this.prisma.location.findUnique({ where: { id: before.locationId }, select: { orgId: true } });
-      if (org?.orgId) {
-        await this.redis.del(this.keyDemand(org.orgId));
-        await this.redis.del(this.keyDemand(org.orgId, before.locationId));
-      }
+    const removed = await this.prisma.shiftDemandTemplate.delete({ where: { id } });
+
+    if (before?.location?.orgId) {
+      const orgId = before.location.orgId;
+      await this.redis.del(this.keyList(orgId));
+      await this.redis.del(this.keyList(orgId, before.locationId));
     }
-    return row;
+    return removed;
   }
 }
