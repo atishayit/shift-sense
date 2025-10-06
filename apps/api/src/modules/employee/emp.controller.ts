@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { EmpService } from './emp.service';
+import { ApiTags } from '@nestjs/swagger';
 
-@Controller() // NOTE: empty because global prefix = 'api'
+@ApiTags('employees')
+@Controller()
 export class EmpController {
-  constructor(private readonly svc: EmpService) {}
+  constructor(private svc: EmpService) { }
 
   @Get('orgs/:orgRef/employees')
   list(@Param('orgRef') orgRef: string) { return this.svc.list(orgRef); }

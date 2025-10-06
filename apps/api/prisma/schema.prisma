@@ -284,3 +284,26 @@ model AuditLog {
   org       Organization? @relation(fields: [orgId], references: [id])
   user      User?         @relation(fields: [userId], references: [id])
 }
+
+model ForecastRun {
+  id           String           @id @default(cuid())
+  orgId        String?
+  createdAt    DateTime         @default(now())
+  method       String           @default("statsmodels")
+  horizonDays  Int
+  mapeAvg      Float
+  folds        ForecastFold[]
+  org          Organization?    @relation(fields: [orgId], references: [id])
+}
+
+model ForecastFold {
+  id         String       @id @default(cuid())
+  runId      String
+  foldIndex  Int
+  mape       Float
+  mae        Float?
+  rmse       Float?
+  run        ForecastRun  @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+}

@@ -1,6 +1,8 @@
 import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
+import { ApiTags } from '@nestjs/swagger';
 
+@ApiTags('audit')
 @Controller('orgs/:orgRef/audit') // global 'api' is set in main.ts
 export class AuditController {
     constructor(private prisma: PrismaService) { }

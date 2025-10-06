@@ -1,9 +1,11 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ForecastService } from './forecast.service';
+import { ApiTags } from '@nestjs/swagger';
 
-@Controller('orgs/:orgRef/forecast') // global 'api' prefix already set
+@ApiTags('forecast')
+@Controller('orgs/:orgRef/forecast')
 export class ForecastController {
-  constructor(private svc: ForecastService) {}
+  constructor(private svc: ForecastService) { }
 
   @Get()
   async get(

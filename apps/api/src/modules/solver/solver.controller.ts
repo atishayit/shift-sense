@@ -1,7 +1,9 @@
 import { Body, Controller, Param, Post } from '@nestjs/common';
 import { SolverService } from './solver.service';
+import { ApiTags } from '@nestjs/swagger';
 
-@Controller() // remove "api"
+@ApiTags('solver')
+@Controller()
 export class SolverController {
   constructor(private readonly svc: SolverService) {}
 

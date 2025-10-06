@@ -9,7 +9,7 @@ function fmt(dt: string) {
   return new Date(dt).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' });
 }
 
-type Assignment = { id: string; isPinned: boolean; cost: string; employee: { code: string; firstName: string; lastName: string } };
+type Assignment = { id: string; isPinned: boolean; cost: string; employee: { id: string; code: string; firstName: string; lastName: string } };
 type Shift = { id: string; start: string; end: string; required: number; role: { name: string }; location: { name: string }; assignments: Assignment[] };
 type Sched = { id: string; weekStart: string; totalCost?: number; shifts: Shift[] };
 
@@ -26,10 +26,15 @@ export default function Roster() {
 
   useEffect(() => { load(); }, []);
 
-  async function togglePin(a: Assignment) {
+  async function togglePin(s: Shift, a: Assignment) {
     setBusy(true);
     const route = a.isPinned ? 'unpin' : 'pin';
-    await fetch(`${API}/assignments/${a.id}/${route}`, { method: 'PATCH' }).catch(() => { });
+    // call the new pair-based route
+    await fetch(`${API}/assignments/${route}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shiftId: s.id, employeeId: a.employee.id }),
+    }).catch(() => { });
     await load();
     setBusy(false);
   }
@@ -60,7 +65,7 @@ export default function Roster() {
                     <button
                       disabled={busy}
                       className="text-xs underline opacity-80 hover:opacity-100"
-                      onClick={() => togglePin(a)}
+                      onClick={() => togglePin(s, a)}   // pass shift s along
                       title={a.isPinned ? 'Unpin' : 'Pin'}
                     >
                       {a.isPinned ? 'Unpin' : 'Pin'}

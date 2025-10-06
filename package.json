@@ -2,17 +2,19 @@
   "name": "shift-sense",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["apps/*", "services/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
   "scripts": {
-    "postinstall": "prisma generate",
-    "db:gen": "prisma generate",
-    "db:migrate": "prisma migrate dev --name init",
-    "db:seed": "node prisma/seed.cjs"
+    "postinstall": "echo skip root prisma generate",
+    "dev:all": "concurrently -n api,web,solver \"pnpm -C apps/api start:dev\" \"pnpm -C apps/web dev\" \"uvicorn services/solver/app/main:app --reload --port 5001\"",
+    "db:gen": "pnpm -C apps/api exec prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma",
+    "db:seed": "pnpm -C apps/api run db:seed"
   },
   "devDependencies": {
-    "prisma": "5.22.0"
-  },
-  "dependencies": {
-    "@prisma/client": "5.22.0"
+    "concurrently": "^9.2.1"
   }
 }

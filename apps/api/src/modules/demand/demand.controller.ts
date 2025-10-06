@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { DemandService } from './demand.service';
+import { ApiTags } from '@nestjs/swagger';
 
-@Controller('orgs/:orgRef/demand') // remove "api/"
+@ApiTags('demand')
+@Controller('orgs/:orgRef/demand')
 export class DemandController {
-  constructor(private readonly svc: DemandService) {}
+  constructor(private readonly svc: DemandService) { }
 
   @Get()
   list(@Param('orgRef') orgRef: string, @Query('locationId') locationId?: string) {
