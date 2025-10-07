@@ -8,6 +8,8 @@ import { SolverModule } from './modules/solver/solver.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { ForecastModule } from './modules/forecast/forecast.module';
 import { RedisModule } from './redis/redis.module';
+import { ApiKeyGuard } from './auth/api-key.guard';
+import { APP_GUARD, Reflector } from '@nestjs/core';
 
 @Module({
     imports: [
@@ -21,5 +23,10 @@ import { RedisModule } from './redis/redis.module';
         AuditModule,
         ForecastModule,
     ],
+    providers: [
+        Reflector,
+        { provide: APP_GUARD, useClass: ApiKeyGuard },
+    ],
+
 })
 export class AppModule { }
