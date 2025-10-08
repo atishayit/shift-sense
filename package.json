@@ -9,19 +9,28 @@
   ],
   "scripts": {
     "postinstall": "echo skip root prisma generate",
-    "setup:infra": "docker compose up -d db redis solver && wait-on -t 120000 tcp:localhost:5432 tcp:localhost:6379 tcp:localhost:5001",
-    "setup:db": "pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma && pnpm -C apps/api run db:seed",
-    "setup": "pnpm setup:infra && pnpm setup:db",
-    "predev:all": "pnpm setup",
+    "// setup and run everything": "",
+    "setup:dev:nix": "pnpm install && docker compose up -d db redis && pnpm db:migrate && pnpm db:seed && pnpm solver:venv:nix && pnpm solver:pip:nix && pnpm dev:all",
+    "setup:dev:win": "pnpm install && docker compose up -d db redis && pnpm db:migrate && pnpm db:seed && pnpm solver:venv:win && pnpm solver:pip:win && pnpm dev:all",
+    "// dev - default uses Dockerized solver": "",
+    "predev:all": "docker compose up -d solver",
     "dev:all": "concurrently -n api,web \"pnpm -C apps/api start:dev\" \"pnpm -C apps/web dev\"",
+    "// local solver (Python 3.11) — Windows": "",
+    "solver:venv:win": "powershell -NoProfile -Command \"if (!(Test-Path services/solver/.venv)) { py -3.11 -m venv services/solver/.venv }\"",
+    "solver:pip:win": "powershell -NoProfile -Command \"services/solver/.venv/Scripts/python.exe -m pip install -U pip; services/solver/.venv/Scripts/pip.exe install -r services/solver/requirements.txt\"",
+    "solver:run:win": "powershell -NoProfile -Command \"services/solver/.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 5001 --app-dir services/solver\"",
+    "dev:all:py311:win": "pnpm solver:venv:win && pnpm solver:pip:win && concurrently -n solver,api,web \"pnpm solver:run:win\" \"pnpm -C apps/api start:dev\" \"pnpm -C apps/web dev\"",
+    "// local solver (Python 3.11) — macOS/Linux": "",
+    "solver:venv:nix": "bash -lc 'test -d services/solver/.venv || python3.11 -m venv services/solver/.venv'",
+    "solver:pip:nix": "bash -lc 'services/solver/.venv/bin/pip install -U pip && services/solver/.venv/bin/pip install -r services/solver/requirements.txt'",
+    "solver:run:nix": "bash -lc 'services/solver/.venv/bin/python -m uvicorn app.main:app --reload --port 5001 --app-dir services/solver'",
+    "dev:all:py311:nix": "pnpm solver:venv:nix && pnpm solver:pip:nix && concurrently -n solver,api,web \"pnpm solver:run:nix\" \"pnpm -C apps/api start:dev\" \"pnpm -C apps/web dev\"",
+    "// DB helpers": "",
     "db:gen": "pnpm -C apps/api exec prisma generate --schema prisma/schema.prisma",
     "db:migrate": "pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma",
-    "db:seed": "pnpm -C apps/api run db:seed",
-    "down": "docker compose down -v",
-    "reset:db": "pnpm down && docker compose up -d db redis && wait-on tcp:localhost:5432 && pnpm db:migrate && pnpm db:seed"
+    "db:seed": "pnpm -C apps/api run db:seed"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "wait-on": "^7.2.0"
+    "concurrently": "^9.2.1"
   }
 }
