@@ -1,35 +1,35 @@
 # ShiftSense
 
-Local‑first staff rostering & demand forecasting stack.
+Local-first staff rostering & demand forecasting stack.
 
 - **API (NestJS)** on **:4000** — Postgres (Prisma), Redis cache, OpenAPI.
 - **Web (Next.js App Router)** on **:3000** — roster, runs, audit, forecast UIs.
-- **Solver (FastAPI + OR‑Tools)** on **:5001** — CP‑SAT optimizer & TS forecast.
+- **Solver (FastAPI + OR-Tools)** on **:5001** — CP-SAT optimizer & TS forecast.
 - **Infra**: Postgres 16, Redis 7 via Docker Compose.
 
-> Examples use Windows PowerShell (`^` line‑continuations). macOS/Linux are equivalent (`\`).
+> Examples use Windows PowerShell (`^` line-continuations). macOS/Linux are equivalent (`\`).
 
 ---
 
 ## Features
 
-- Orgs, locations, teams, roles, employees
-- Demand templates → **generate** weekly schedules
-- **Solve** (CP‑SAT): role eligibility, availability, time‑off, weekly cap, 12h rest
-- **Pin/Unpin** assignments; re‑solve respects pins
-- **Audit log** for actions (pin/unpin, preset save) with UI
-- **Forecast** endpoint (AR + rolling backtests), confidence band, horizon toggle
-- **Redis caching** for GETs (orgs, employees, schedules, demand) + write‑side bust
-- **OpenAPI** at `/api/docs`
-- **API key guard** for mutating routes (header `x-api-key`)
+- Orgs, locations, teams, roles, employees  
+- Demand templates → **generate** weekly schedules  
+- **Solve** (CP-SAT): role eligibility, availability, time-off, weekly cap, 12h rest  
+- **Pin/Unpin** assignments; re-solve respects pins  
+- **Audit log** (pin/unpin, preset save) with UI  
+- **Forecast** endpoint (AR + rolling backtests), confidence band, horizon toggle  
+- **Redis caching** for GETs (orgs, employees, schedules, demand) + write-side bust  
+- **OpenAPI** at `/api/docs`  
+- **API key guard** for mutating routes (`x-api-key`)  
 
 ---
 
 ## Stack
 
-- **API**: NestJS 11, Prisma 5.22, PostgreSQL, Redis, Axios, Swagger
-- **Web**: Next.js 14 (App Router), TailwindCSS, Recharts
-- **Solver**: FastAPI, OR‑Tools, NumPy, Pandas, Statsmodels
+- **API**: NestJS 11, Prisma 5.22, PostgreSQL, Redis, Axios, Swagger  
+- **Web**: Next.js 14 (App Router), TailwindCSS, Recharts  
+- **Solver**: FastAPI, OR-Tools, NumPy, Pandas, Statsmodels  
 - **DX**: pnpm workspaces, Docker Compose, `concurrently`
 
 ---
@@ -75,7 +75,7 @@ flowchart LR
 
 ---
 
-## ERD (high‑level)
+## ERD (high-level)
 
 ```mermaid
 erDiagram
@@ -99,39 +99,75 @@ erDiagram
 
 ---
 
-## Quick start
+## One-command dev start (recommended)
+
+This **sets up DB, seeds, and runs all services** (db, redis, solver, api, web).
+
+```powershell
+pnpm setup:dev && pnpm dev:all
+```
+
+**What it does**
+
+- `setup:dev`
+  - `pnpm install`
+  - `docker compose up -d db redis`
+  - `pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma`
+  - `pnpm -C apps/api run db:seed`
+  - `docker compose up -d solver` (Python service in Docker)
+- `dev:all`
+  - runs API (`:4000`), Web (`:3000`), and tails solver logs
+
+> Prefer Docker for the solver on Windows. For a local Python solver, see **Manual setup**.
+
+---
+
+## Manual setup (alternative)
 
 ### 1) Prereqs
-- Node 20+ (v23 OK), pnpm
-- Python 3.11+
-- Docker Desktop
+Node 20+ (v23 OK), pnpm; Python 3.11+; Docker Desktop.
 
 ### 2) Install deps
 ```powershell
 pnpm install
 ```
 
-### 3) Start infra (Postgres + Redis)
+### 3) Start infra
 ```powershell
 docker compose up -d db redis
 ```
 
-### 4) Database (API app)
+### 4) DB migrate + seed
 ```powershell
 pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma
 pnpm -C apps/api run db:seed
 ```
 
-### 5) Run everything (dev)
+### 5a) Solver in Docker
 ```powershell
-pnpm dev:all
+docker compose up -d solver
 ```
-- Web → http://localhost:3000  
-- API → http://localhost:4000  
-- Solver → http://127.0.0.1:5001  
-- Swagger → http://localhost:4000/api/docs
 
-> Alternatively, `docker compose up -d` builds & runs **db, redis, solver, api, web** from the repo’s `docker-compose.yml`.
+### 5b) Solver locally
+```powershell
+cd services/solver
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 5001
+```
+
+### 6) Run API & Web
+```powershell
+pnpm -C apps/api start:dev
+pnpm -C apps/web dev
+```
+
+Open:  
+Web → http://localhost:3000  
+API → http://localhost:4000  
+Solver → http://127.0.0.1:5001  
+Swagger → http://localhost:4000/api/docs
 
 ---
 
@@ -150,6 +186,8 @@ PORT=4000
 ```
 NEXT_PUBLIC_API_URL=http://localhost:4000
 ```
+
+> With full docker-compose, API uses `solver:5001` & `redis:6379` internally.
 
 ---
 
@@ -199,16 +237,16 @@ curl -i -X PATCH http://localhost:4000/api/assignments/<assignmentId>/unpin -H "
 
 ## Redis caching
 
-**Key conventions**
+**Keys**
 - Orgs: `org:list`, `org:<id>`
 - Employees: `org:<orgId>:employees:list`
 - Schedules: `schedules:list:<orgId>`, `schedule:<id>`, `schedule:<id>:summary`
 - Demand: `demand:<orgId>:all`, `demand:<orgId>:<locationId>`
 - Forecast (UI cache): `forecast:<orgId>:<horizon>`
 
-**Bust on writes** is implemented in the corresponding services (create/update/delete/preset save/pin).
+**Bust on writes** is implemented per service.
 
-Inspect in Redis:
+Inspect:
 ```powershell
 docker exec -it redis redis-cli KEYS "*"
 docker exec -it redis redis-cli GET "schedule:<id>"
@@ -218,54 +256,44 @@ docker exec -it redis redis-cli GET "schedule:<id>"
 
 ## Forecast & persistence
 
-**Endpoint**: `GET /api/orgs/:orgRef/forecast?horizon=14`  
-Builds an 8‑week daily series from `ShiftDemandTemplate`, forwards to Solver `/forecast`, returns history + forecast + backtest MAPE.
+**Endpoint**: `GET /api/orgs/:orgRef/forecast?horizon=14` → builds 8-week daily series from templates, calls Solver `/forecast`, returns history + forecast + backtest MAPE.
 
-**Persistence**: each run is stored:
+**Persistence**
 - `ForecastRun { id, orgId, createdAt, method, horizonDays, mapeAvg }`
 - `ForecastFold { runId, foldIndex, mape, mae, rmse }`
 
-**List runs**:
+List runs:
 ```powershell
 curl http://localhost:4000/api/orgs/demo/forecast/runs
 ```
 
-**Web UI**
-- `/forecast` — chart with history vs forecast, horizon selector
-- `/forecast/runs` — table showing run date, horizon, average MAPE, and per‑fold MAPE
+**Web**
+- `/forecast` — chart
+- `/forecast/runs` — table with avg MAPE & per-fold MAPE
 
 ---
 
 ## Demo walkthrough
 
-1. **Roster**: open `/roster`, re‑solve, note total cost & pinned badges
-2. **Runs**: visit `/runs`, pick a run, re‑solve
-3. **Audit**: pin/unpin in roster, refresh `/audit` to see entries
-4. **Forecast**: open `/forecast`, change horizon (7/14/28/56)
-5. **Forecast runs**: open `/forecast/runs`, inspect MAPE per fold
-
-Screenshots to include:
-- Roster with pinned badge
-- Runs list with objectives
-- Audit log table
-- Forecast chart & forecast runs table
+1. **Roster** → `/roster`, re-solve, note cost & pinned badges  
+2. **Runs** → `/runs`, pick run, re-solve  
+3. **Audit** → pin/unpin in roster, check `/audit`  
+4. **Forecast** → `/forecast`, try horizon 7/14/28/56  
+5. **Forecast runs** → `/forecast/runs`, inspect MAPEs  
 
 ---
 
 ## Swagger
 
-- http://localhost:4000/api/docs
+http://localhost:4000/api/docs
 
 ---
 
 ## Useful dev commands
 
 ```powershell
-# Prisma
 pnpm -C apps/api exec prisma migrate status --schema prisma/schema.prisma
 pnpm -C apps/api exec prisma studio --schema prisma/schema.prisma
-
-# Lint (if configured)
 pnpm -C apps/api lint
 pnpm -C apps/web lint
 ```

@@ -9,12 +9,19 @@
   ],
   "scripts": {
     "postinstall": "echo skip root prisma generate",
-    "dev:all": "concurrently -n api,web,solver \"pnpm -C apps/api start:dev\" \"pnpm -C apps/web dev\" \"uvicorn services/solver/app/main:app --reload --port 5001\"",
+    "setup:infra": "docker compose up -d db redis solver && wait-on -t 120000 tcp:localhost:5432 tcp:localhost:6379 tcp:localhost:5001",
+    "setup:db": "pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma && pnpm -C apps/api run db:seed",
+    "setup": "pnpm setup:infra && pnpm setup:db",
+    "predev:all": "pnpm setup",
+    "dev:all": "concurrently -n api,web \"pnpm -C apps/api start:dev\" \"pnpm -C apps/web dev\"",
     "db:gen": "pnpm -C apps/api exec prisma generate --schema prisma/schema.prisma",
     "db:migrate": "pnpm -C apps/api exec prisma migrate dev --schema prisma/schema.prisma",
-    "db:seed": "pnpm -C apps/api run db:seed"
+    "db:seed": "pnpm -C apps/api run db:seed",
+    "down": "docker compose down -v",
+    "reset:db": "pnpm down && docker compose up -d db redis && wait-on tcp:localhost:5432 && pnpm db:migrate && pnpm db:seed"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "wait-on": "^7.2.0"
   }
 }
