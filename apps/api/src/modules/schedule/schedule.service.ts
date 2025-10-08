@@ -2,6 +2,7 @@ import { Injectable, HttpException } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { AuditService } from '../../common/audit.service';
 import { RedisService } from 'src/redis/redis.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ScheduleService {
@@ -23,6 +24,72 @@ export class ScheduleService {
   private keyList(orgId: string) { return `schedules:list:${orgId}`; }
   private keyOne(id: string) { return `schedule:${id}`; }
   private keySummary(id: string) { return `schedule:${id}:summary`; }
+
+  async generate(orgRef: string, weekStartISO: string) {
+    const orgId = await this.orgIdFromRef(orgRef);
+    const weekStart = new Date(weekStartISO);
+    if (isNaN(weekStart.getTime())) throw new HttpException('Invalid weekStartISO', 400);
+
+    // compute week range (Sun..Sat aligned with your seed data; tweak if needed)
+    const start = new Date(weekStart);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 7);
+
+    // create schedule
+    const schedule = await this.prisma.schedule.create({
+      data: {
+        orgId,
+        name: `Week ${start.toISOString().slice(0, 10)}`,
+        weekStart: start,
+        weekEnd: end,
+        status: 'DRAFT',
+      },
+    });
+
+    // expand demand templates into shifts
+    const templates = await this.prisma.shiftDemandTemplate.findMany({
+      where: { location: { orgId } },
+      select: { locationId: true, roleId: true, weekday: true, startTime: true, endTime: true, required: true },
+    });
+
+    const toDateTime = (base: Date, hhmm: string) => {
+      const [h, m] = hhmm.split(':').map(Number);
+      const d = new Date(base);
+      d.setHours(h, m, 0, 0);
+      return d;
+    };
+
+    const shiftCreates: Prisma.ShiftCreateManyInput[] = [];
+    for (const t of templates) {
+      // day = start (weekStart) + weekday offset
+      const day = new Date(start);
+      // JS: 0=Sun..6=Sat — template.weekday is the same in your schema
+      const offset = (t.weekday + 7) % 7;
+      day.setDate(start.getDate() + offset);
+
+      const st = toDateTime(day, t.startTime);
+      const en = toDateTime(day, t.endTime);
+
+      shiftCreates.push({
+        scheduleId: schedule.id,
+        locationId: t.locationId,
+        roleId: t.roleId,
+        start: st,
+        end: en,
+        required: t.required,
+      });
+    }
+
+    if (shiftCreates.length) {
+      await this.prisma.shift.createMany({ data: shiftCreates });
+    }
+
+    // bust caches
+    await this.redis.del(this.keyList(orgId));
+
+    // return full schedule
+    return this.get(schedule.id);
+  }
 
   async list(orgRef: string) {
     const orgId = await this.orgIdFromRef(orgRef);

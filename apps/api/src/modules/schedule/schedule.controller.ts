@@ -1,12 +1,26 @@
-import { Body, Controller, Get, Param, Patch, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { ScheduleService } from './schedule.service';
 import { ApiTags } from '@nestjs/swagger';
 import { ApiKeyProtected } from 'src/auth/api-key.decorator';
+import { SolverService } from '../solver/solver.service';
 
 @ApiTags('schedules')
 @Controller()
 export class ScheduleController {
-  constructor(private readonly svc: ScheduleService) { }
+  constructor(private readonly svc: ScheduleService, private readonly solver: SolverService) { }
+
+  @Post('orgs/:orgRef/schedules/generate')
+  @ApiKeyProtected()
+  generate(@Param('orgRef') orgRef: string, @Body() body: { weekStartISO: string }) {
+    return this.svc.generate(orgRef, body.weekStartISO);
+  }
+
+  @Post('orgs/:orgRef/schedules/:id/solve')
+  @ApiKeyProtected()
+  solve(@Param('orgRef') orgRef: string, @Param('id') id: string) {
+    // delegates to existing solver via service you already use elsewhere
+    return this.solver.run(orgRef, id);
+  }
 
   @Get('orgs/:orgRef/schedules') list(@Param('orgRef') orgRef: string) { return this.svc.list(orgRef); }
   @Get('schedules/:id') get(@Param('id') id: string) { return this.svc.get(id); }
