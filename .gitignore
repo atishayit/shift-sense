@@ -7,7 +7,6 @@ coverage/
 
 # Env
 .env
-.env.*
 !.env.example
 
 # Python solver
