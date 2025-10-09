@@ -235,10 +235,10 @@ export class ScheduleService {
 
   // --- New: Pin/Unpin by stable pair (shiftId, employeeId) with cache busting ---
   async pinByPair(shiftId: string, employeeId: string, isPinned: boolean) {
-    const updated = await this.prisma.assignment.update({
-      // requires a unique on (shiftId, employeeId) in your Prisma schema
+    const updated = await this.prisma.assignment.upsert({
       where: { shiftId_employeeId: { shiftId, employeeId } },
-      data: { isPinned },
+      update: { isPinned },
+      create: { shiftId, employeeId, isPinned },
     });
 
     const emp = await this.prisma.employee.findUnique({
@@ -255,7 +255,6 @@ export class ScheduleService {
       meta: { shiftId: updated.shiftId, employeeId: updated.employeeId },
     });
 
-    // bust caches touching this schedule
     const sh = await this.prisma.shift.findUnique({
       where: { id: shiftId },
       select: { scheduleId: true },
@@ -264,7 +263,6 @@ export class ScheduleService {
       await this.redis.del(this.keyOne(sh.scheduleId));
       await this.redis.del(this.keySummary(sh.scheduleId));
     }
-
     return updated;
   }
 }
