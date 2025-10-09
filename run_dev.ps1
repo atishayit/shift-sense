@@ -34,10 +34,6 @@ if(-not(Test-Path $webEnvPath)){
   elseif(Test-Path apps\web\.env.example){ Copy-Item apps\web\.env.example $webEnvPath }
   else{ New-Item -ItemType File -Path $webEnvPath | Out-Null }
 }
-$apiBase = "http://localhost:$Port/api"
-$webRaw = Get-Content $webEnvPath -Raw
-if($webRaw -notmatch '(?m)^NEXT_PUBLIC_API_BASE='){ Add-Content $webEnvPath "NEXT_PUBLIC_API_BASE=$apiBase" }
-if($webRaw -notmatch '(?m)^VITE_API_BASE='){        Add-Content $webEnvPath "VITE_API_BASE=$apiBase" }
 
 # 3) Infra
 docker compose up -d db redis solver | Out-Null
