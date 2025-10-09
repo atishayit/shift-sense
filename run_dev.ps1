@@ -6,92 +6,78 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+function Req($n){ if(-not(Get-Command $n -ErrorAction SilentlyContinue)){ throw "$n not found" } }
+Req pnpm; Req docker
 
-function Require-Cmd($name) {
-  if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { throw "$name not found" }
-}
-Require-Cmd pnpm
-Require-Cmd docker
+if(-not(Test-Path package.json)){ throw "Run from repo root" }
+if(-not(Test-Path apps\api)){ throw "apps\api missing" }
+if(-not(Test-Path apps\web)){ throw "apps\web missing" }
 
-if (-not (Test-Path package.json)) { throw "Run from repo root" }
-if (-not (Test-Path apps\api)) { throw "apps\api missing" }
-if (-not (Test-Path apps\web)) { throw "apps\web missing" }
+# 0) Install
+if(-not (Test-Path node_modules)){ pnpm install }
+if(-not (Test-Path apps\api\node_modules)){ pnpm install }
 
-# --- ENV: API ---
-$newApiEnv = @()
+# 1) ENV: API
 $apiEnvPath = "apps\api\.env"
-if (Test-Path infra\.env.local -and -not (Test-Path $apiEnvPath)) { Copy-Item infra\.env.local $apiEnvPath }
-if (-not (Test-Path $apiEnvPath)) { New-Item -ItemType File -Path $apiEnvPath | Out-Null }
-$apiEnv = Get-Content $apiEnvPath -Raw
-if ($apiEnv -notmatch '(?m)^PORT=')        { $newApiEnv += "PORT=$Port" }
-if ($apiEnv -notmatch '(?m)^API_KEY=')     { $newApiEnv += "API_KEY=$ApiKey" }
-if ($apiEnv -notmatch '(?m)^SOLVER_URL=')  { $newApiEnv += "SOLVER_URL=$SolverUrl" }
-if ($newApiEnv.Count) { Add-Content $apiEnvPath -Value ($newApiEnv -join "`n") }
+if((Test-Path infra\.env.local) -and -not(Test-Path $apiEnvPath)){ Copy-Item infra\.env.local $apiEnvPath }
+if(-not(Test-Path $apiEnvPath)){ New-Item -ItemType File -Path $apiEnvPath | Out-Null }
+$add=@(); $raw = (Get-Content $apiEnvPath -Raw)
+if($raw -notmatch '(?m)^PORT='){       $add += "PORT=$Port" }
+if($raw -notmatch '(?m)^API_KEY='){    $add += "API_KEY=$ApiKey" }
+if($raw -notmatch '(?m)^SOLVER_URL='){ $add += "SOLVER_URL=$SolverUrl" }
+if($add.Count){ Add-Content $apiEnvPath ($add -join "`n") }
 
-# --- ENV: WEB ---
+# 2) ENV: WEB
 $webEnvPath = "apps\web\.env"
-if (-not (Test-Path $webEnvPath)) {
-  if (Test-Path infra\.env.web.local) { Copy-Item infra\.env.web.local $webEnvPath }
-  elseif (Test-Path apps\web\.env.example) { Copy-Item apps\web\.env.example $webEnvPath }
-  else { New-Item -ItemType File -Path $webEnvPath | Out-Null }
+if(-not(Test-Path $webEnvPath)){
+  if(Test-Path infra\.env.web.local){ Copy-Item infra\.env.web.local $webEnvPath }
+  elseif(Test-Path apps\web\.env.example){ Copy-Item apps\web\.env.example $webEnvPath }
+  else{ New-Item -ItemType File -Path $webEnvPath | Out-Null }
 }
 $apiBase = "http://localhost:$Port/api"
-if ((Get-Content $webEnvPath -Raw) -notmatch '(?m)^NEXT_PUBLIC_API_BASE=') { Add-Content $webEnvPath "NEXT_PUBLIC_API_BASE=$apiBase" }
-if ((Get-Content $webEnvPath -Raw) -notmatch '(?m)^VITE_API_BASE=')        { Add-Content $webEnvPath "VITE_API_BASE=$apiBase" }
+$webRaw = Get-Content $webEnvPath -Raw
+if($webRaw -notmatch '(?m)^NEXT_PUBLIC_API_BASE='){ Add-Content $webEnvPath "NEXT_PUBLIC_API_BASE=$apiBase" }
+if($webRaw -notmatch '(?m)^VITE_API_BASE='){        Add-Content $webEnvPath "VITE_API_BASE=$apiBase" }
 
-# --- INFRA ---
-docker compose up -d db redis solver
+# 3) Infra
+docker compose up -d db redis solver | Out-Null
 docker compose ps | Out-Host
 
-# --- DB: generate/migrate/seed ---
-try { pnpm db:gen } catch {
-  Push-Location apps\api
-  npx prisma generate --schema prisma/schema.prisma
-  Pop-Location
-}
-pnpm db:migrate
+# 4) Prisma gen/migrate/seed
+Push-Location apps\api
+npx prisma generate --schema prisma/schema.prisma
+npx prisma migrate dev --schema prisma/schema.prisma -n "auto"
+Pop-Location
 pnpm db:seed
 
-# --- START DEV (background) ---
+# 5) Start dev servers (via cmd.exe to avoid Win32 shim issues)
 New-Item -ItemType Directory -Path logs -ErrorAction SilentlyContinue | Out-Null
-Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*pnpm*" -and ($_.MainWindowTitle -like "*apps/api*" -or $_.MainWindowTitle -like "*apps/web*") } | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Process pnpm -ArgumentList "-C","apps/api","start:dev" -RedirectStandardOutput logs\api.log -RedirectStandardError logs\api.log -NoNewWindow
-Start-Process pnpm -ArgumentList "-C","apps/web","dev"       -RedirectStandardOutput logs\web.log -RedirectStandardError logs\web.log -NoNewWindow
+Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-# --- WAIT FOR API ---
-$health = "http://localhost:$Port/api"
-$max = 60
-for ($i=0; $i -lt $max; $i++) {
-  try { Invoke-WebRequest -Uri $health -UseBasicParsing -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep -Seconds 1 }
-  if ($i -eq $max-1) { throw "API not responding at $health" }
-}
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c","pnpm -C apps/api start:dev" -RedirectStandardOutput logs\api.out.log -RedirectStandardError logs\api.err.log -NoNewWindow
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c","pnpm -C apps/web dev"       -RedirectStandardOutput logs\web.out.log -RedirectStandardError logs\web.err.log -NoNewWindow
 
-# --- PRESET ---
-$presetBody = @{
-  weights = @{ assignment = 1; unassigned = 1000; casualPenalty = 50; consecutivePenalty = 20 }
-  rules   = @{ allowCrossLocation = $true; maxHoursPerWeek = 60; minRestHours = 0 }
-} | ConvertTo-Json -Depth 5 -Compress
-Invoke-RestMethod -Method PUT -Uri "$apiBase/orgs/demo/preset" -Headers @{ 'x-api-key'=$ApiKey } -ContentType 'application/json' -Body $presetBody | Out-Null
+# 6) Wait for API
+for($i=0;$i -lt 60;$i++){ try{ Invoke-WebRequest -Uri $apiBase -UseBasicParsing -TimeoutSec 2 | Out-Null; break } catch{ Start-Sleep 1 } if($i -eq 59){ throw "API not responding at $apiBase" } }
 
-# --- GENERATE SCHEDULE ---
-$genBody = @{ weekStartISO = $WeekStart } | ConvertTo-Json -Compress
-Invoke-RestMethod -Method POST -Uri "$apiBase/orgs/demo/schedules/generate" -Headers @{ 'x-api-key'=$ApiKey } -ContentType 'application/json' -Body $genBody | Out-Null
+# 7) Preset + Generate + Solve
+$preset = @{ weights=@{assignment=1;unassigned=1000;casualPenalty=50;consecutivePenalty=20}; rules=@{allowCrossLocation=$true;maxHoursPerWeek=60;minRestHours=0} } | ConvertTo-Json -Depth 5 -Compress
+Invoke-RestMethod -Method PUT -Uri "$apiBase/orgs/demo/preset" -Headers @{ 'x-api-key'=$ApiKey } -ContentType 'application/json' -Body $preset | Out-Null
 
-# --- GET SCHEDULE ID ---
+$gen = @{ weekStartISO = $WeekStart } | ConvertTo-Json -Compress
+Invoke-RestMethod -Method POST -Uri "$apiBase/orgs/demo/schedules/generate" -Headers @{ 'x-api-key'=$ApiKey } -ContentType 'application/json' -Body $gen | Out-Null
+
 $schedules = Invoke-RestMethod "$apiBase/orgs/demo/schedules"
-if (-not $schedules) { throw "No schedules returned" }
 $SCHED = $schedules[0].id
-if (-not $SCHED) { throw "Could not extract schedule id" }
 
-# --- SOLVE + APPLY ---
-$solveBody = @{ apply = $true } | ConvertTo-Json -Compress
-Invoke-RestMethod -Method POST -Uri "$apiBase/orgs/demo/schedules/$SCHED/solve" -Headers @{ 'x-api-key'=$ApiKey } -ContentType 'application/json' -Body $solveBody | Out-Null
+$solve = @{ apply = $true } | ConvertTo-Json -Compress
+Invoke-RestMethod -Method POST -Uri "$apiBase/orgs/demo/schedules/$SCHED/solve" -Headers @{ 'x-api-key'=$ApiKey } -ContentType 'application/json' -Body $solve | Out-Null
 
-# --- SUMMARY ---
+# 8) Summary
 $summary = Invoke-RestMethod "$apiBase/schedules/$SCHED/summary"
 $summary | ConvertTo-Json -Depth 8
 
 "`nAPI  : $apiBase"
 "WEB  : http://localhost:3000"
 "SCHED: $SCHED"
-"Logs : $(Resolve-Path logs\api.log), $(Resolve-Path logs\web.log)"
+"Logs : $(Resolve-Path logs\api.out.log), $(Resolve-Path logs\web.out.log)"
